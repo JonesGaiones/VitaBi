@@ -1,0 +1,91 @@
+# ============================================================================
+# docker-compose.yml — rodar Vita BI localmente sem Antigravity
+# ----------------------------------------------------------------------------
+# Uso:
+#   docker compose up --build
+#
+# Serviços:
+#   db       → Postgres 16 com schema aplicado no primeiro boot
+#   redis    → cache
+#   backend  → FastAPI em http://localhost:8000
+#   worker   → Prefect (processa flows)
+#   frontend → Next.js em http://localhost:3000
+# ============================================================================
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vitabi
+      POSTGRES_USER: vitabi
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # aplica schema no primeiro boot
+      - ./backend/app/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vitabi -d vitabi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+  backend:
+    build: ./backend
+    depends_on:
+      db:    { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://vitabi:${DB_PASSWORD:-changeme}@db:5432/vitabi
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-prod}
+      QB_CLIENT_ID: ${QB_CLIENT_ID:-}
+      QB_CLIENT_SECRET: ${QB_CLIENT_SECRET:-}
+      QB_REFRESH_TOKEN: ${QB_REFRESH_TOKEN:-}
+      QB_REALM_ID: ${QB_REALM_ID:-}
+      DE_PARA_DIR: /app/data/de_para
+      RAW_DIR: /app/data/raw
+      CORS_ORIGINS: '["http://localhost:3000"]'
+    ports: ["8000:8000"]
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    command: python -c "print('Worker idle. Use api/etl/trigger/* to dispatch flows.'); import time; time.sleep(99999)"
+    depends_on:
+      db:    { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://vitabi:${DB_PASSWORD:-changeme}@db:5432/vitabi
+      REDIS_URL: redis://redis:6379/0
+      QB_CLIENT_ID: ${QB_CLIENT_ID:-}
+      QB_CLIENT_SECRET: ${QB_CLIENT_SECRET:-}
+      QB_REFRESH_TOKEN: ${QB_REFRESH_TOKEN:-}
+      QB_REALM_ID: ${QB_REALM_ID:-}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on: [backend]
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports: ["3000:3000"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

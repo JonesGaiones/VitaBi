@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------
+   Typography — Fraunces for editorial headings, Geist for UI,
+   JetBrains Mono for numbers. Imported via next/font in layout.tsx.
+   ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------
+   Global base
+   ------------------------------------------------------------------ */
+:root {
+  color-scheme: dark;
+  --bg-grid: radial-gradient(
+    rgba(255, 255, 255, 0.03) 1px,
+    transparent 1px
+  );
+}
+
+html, body {
+  @apply bg-ink-900 text-ink-100 antialiased;
+  font-family: var(--font-sans);
+}
+
+body {
+  background-image: var(--bg-grid);
+  background-size: 24px 24px;
+  min-height: 100vh;
+}
+
+/* Selection */
+::selection {
+  background-color: rgba(255, 107, 53, 0.35);
+  color: #ffffff;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* ------------------------------------------------------------------
+   Custom components
+   ------------------------------------------------------------------ */
+
+.panel {
+  @apply bg-ink-800/60 backdrop-blur-sm border border-ink-600/50 rounded-xl
+         shadow-elev-1 relative overflow-hidden;
+}
+
+.panel-header {
+  @apply px-5 py-4 border-b border-ink-600/40 flex items-center justify-between;
+}
+
+.panel-body {
+  @apply p-5;
+}
+
+.metric-value {
+  @apply font-mono font-medium tracking-tight;
+  font-feature-settings: "tnum", "ss02";
+}
+
+.metric-label {
+  @apply text-xs uppercase tracking-[0.18em] text-ink-300;
+}
+
+/* Drill-down trail */
+.trail {
+  @apply flex items-center gap-1 text-sm;
+}
+.trail-item {
+  @apply px-2 py-1 rounded text-ink-300 hover:text-ink-100 hover:bg-ink-700/60
+         cursor-pointer transition-colors;
+}
+.trail-item--active {
+  @apply text-pulse bg-pulse/10;
+}
+
+/* Severity pills */
+.pill {
+  @apply inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs
+         font-medium tracking-wide;
+}
+.pill-critical { @apply bg-rose-500/15 text-rose-500; }
+.pill-warning  { @apply bg-amber-500/15 text-amber-500; }
+.pill-info     { @apply bg-ink-100/10 text-ink-200; }
+.pill-success  { @apply bg-emerald-500/15 text-emerald-500; }
+
+/* Sparkle on highlighted insights */
+.shimmer-bg {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 107, 53, 0.08) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2.4s linear infinite;
+}
+
+/* AG-Grid dark theme tweaks */
+.ag-theme-alpine-dark {
+  --ag-background-color: transparent;
+  --ag-header-background-color: rgba(255, 255, 255, 0.02);
+  --ag-odd-row-background-color: transparent;
+  --ag-borders: solid 1px;
+  --ag-border-color: rgba(255, 255, 255, 0.06);
+  --ag-row-hover-color: rgba(255, 107, 53, 0.06);
+  --ag-selected-row-background-color: rgba(255, 107, 53, 0.1);
+  --ag-font-family: var(--font-sans);
+}

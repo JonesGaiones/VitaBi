@@ -1,0 +1,172 @@
+# ============================================================================
+# ANTIGRAVITY MANIFEST — Vita BI
+# ----------------------------------------------------------------------------
+# Este arquivo é lido pelo runtime do Antigravity na raiz do projeto.
+# Declara services, routes, volumes, secrets e cron jobs.
+# ============================================================================
+
+version: "1.0.0"
+project: vita-bi
+owner: joao@vitaforte.com
+
+# ----------------------------------------------------------------------------
+# SECRETS — injetados via vault, nunca commitar valores reais
+# ----------------------------------------------------------------------------
+secrets:
+  - QB_CLIENT_ID
+  - QB_CLIENT_SECRET
+  - QB_REFRESH_TOKEN
+  - QB_REALM_ID                      # company ID do QuickBooks
+  - DATABASE_URL                     # postgresql://user:pass@db:5432/vitabi
+  - REDIS_URL                        # redis://redis:6379/0
+  - JWT_SECRET                       # 256-bit random
+  - SMTP_HOST
+  - SMTP_USER
+  - SMTP_PASS                        # para alertas por email
+  - WEBHOOK_SLACK_URL                # alertas em tempo real
+
+# ----------------------------------------------------------------------------
+# SERVICES — cada um roda em container isolado
+# ----------------------------------------------------------------------------
+services:
+
+  backend:
+    build: ./backend
+    language: python
+    version: "3.12"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+    port: 8000
+    env:
+      - DATABASE_URL
+      - REDIS_URL
+      - JWT_SECRET
+      - QB_CLIENT_ID
+      - QB_CLIENT_SECRET
+      - QB_REFRESH_TOKEN
+      - QB_REALM_ID
+    depends_on: [db, redis]
+    healthcheck:
+      path: /health
+      interval: 30s
+    resources:
+      cpu: 2
+      memory: 2Gi
+    replicas: 2                      # HA horizontal
+
+  frontend:
+    build: ./frontend
+    language: node
+    version: "20"
+    command: npm run start
+    port: 3000
+    env:
+      - NEXT_PUBLIC_API_URL=https://api.vitabi.internal
+    depends_on: [backend]
+    resources:
+      cpu: 1
+      memory: 1Gi
+
+  worker:
+    build: ./backend
+    language: python
+    version: "3.12"
+    command: prefect worker start --pool vitabi-pool
+    env:
+      - DATABASE_URL
+      - REDIS_URL
+      - QB_CLIENT_ID
+      - QB_CLIENT_SECRET
+      - QB_REFRESH_TOKEN
+      - QB_REALM_ID
+    depends_on: [db, redis]
+    resources:
+      cpu: 2
+      memory: 4Gi                    # ETL pesado
+
+  db:
+    image: postgres:16-alpine
+    port: 5432
+    env:
+      - POSTGRES_DB=vitabi
+      - POSTGRES_USER=vitabi
+      - POSTGRES_PASSWORD_FROM_SECRET=DATABASE_PASSWORD
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    resources:
+      cpu: 4
+      memory: 8Gi
+
+  redis:
+    image: redis:7-alpine
+    port: 6379
+    volumes:
+      - redisdata:/data
+    resources:
+      cpu: 0.5
+      memory: 512Mi
+
+# ----------------------------------------------------------------------------
+# ROUTES — expõem services para o mundo externo
+# ----------------------------------------------------------------------------
+routes:
+  - host: vitabi.vitaforte.com
+    service: frontend
+    tls: auto                        # Let's Encrypt automático
+
+  - host: api.vitabi.vitaforte.com
+    service: backend
+    tls: auto
+    cors:
+      allow_origins: ["https://vitabi.vitaforte.com"]
+      allow_credentials: true
+
+# ----------------------------------------------------------------------------
+# VOLUMES — persistência
+# ----------------------------------------------------------------------------
+volumes:
+  pgdata:
+    size: 100Gi
+    backup: daily                    # snapshot automático
+  redisdata:
+    size: 10Gi
+  rawdata:
+    size: 50Gi
+    mount: /app/data
+    service: [backend, worker]
+
+# ----------------------------------------------------------------------------
+# CRON JOBS — agendados pelo Antigravity, executados pelo worker
+# ----------------------------------------------------------------------------
+cron:
+  - name: qb_extract_incremental
+    schedule: "0 */2 * * *"          # a cada 2h
+    service: worker
+    command: python -m app.etl.run_flow qb_extract_flow
+
+  - name: insights_daily
+    schedule: "0 5 * * *"            # 05:00 todo dia
+    service: worker
+    command: python -m app.etl.run_flow insights_flow
+
+  - name: mv_refresh
+    schedule: "*/15 * * * *"         # a cada 15min
+    service: worker
+    command: python -m app.etl.run_flow mv_refresh_flow
+
+  - name: churn_scan
+    schedule: "0 7 * * *"            # 07:00 todo dia
+    service: worker
+    command: python -m app.etl.run_flow churn_flow
+
+# ----------------------------------------------------------------------------
+# OBSERVABILIDADE
+# ----------------------------------------------------------------------------
+observability:
+  logs:
+    retention: 30d
+  metrics:
+    enabled: true
+    path: /metrics                   # Prometheus endpoint no backend
+  tracing:
+    enabled: true
+    sampler: 0.1                     # 10% das requests
