@@ -136,6 +136,14 @@ def update(c: SOSClient, entity: str, rid: int, changes: dict | None, line_chang
     current = c.get(f"{entity}/{int(rid)}").get("data")
     if not current:
         raise SOSError(f"{entity} {rid} não encontrado.")
+    changes = dict(changes or {})
+    if entity == "item":
+        # O SOS só grava o preço do item se salesPrice E baseSalesPrice vierem juntos (e sem markup).
+        for a, b in (("salesPrice", "baseSalesPrice"), ("purchaseCost", "basePurchaseCost")):
+            if a in changes and b not in changes and b in current:
+                changes[b] = changes[a]
+        if "salesPrice" in changes and "useMarkup" not in changes:
+            changes["useMarkup"] = False
     new = _apply(current, changes, line_changes)
     diff = _diff(current, new)
     tok = _token("update", entity, rid, changes, line_changes, current.get("syncToken"))
