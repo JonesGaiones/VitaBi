@@ -120,3 +120,14 @@ def test_delete_item_soft_with_backup():
     assert not fake.writes()
     r = run("sos_delete_item", item_id=573, confirm_token=p["confirm_token"], reason="duplicado")
     assert fake.writes()[0][0] == "DELETE" and r["backup"]
+
+
+def test_item_price_sets_base_price_too():
+    fake = use({"id": 188, "syncToken": 1, "salesPrice": 0, "baseSalesPrice": 0, "useMarkup": True})
+    args = dict(entity="item", id=188, changes={"salesPrice": 35})
+    p = run("sos_update_record", **args)
+    campos = {d["campo"] for d in p["mudancas"]}
+    assert {"salesPrice", "baseSalesPrice", "useMarkup"} <= campos
+    run("sos_update_record", **args, confirm_token=p["confirm_token"])
+    body = fake.writes()[0][2]
+    assert body["salesPrice"] == body["baseSalesPrice"] == 35 and body["useMarkup"] is False
