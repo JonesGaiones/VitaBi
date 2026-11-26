@@ -130,7 +130,9 @@ def test_key_middleware():
     assert asyncio.run(go([(b"authorization", b"Bearer no")])) == 401
 
 
-def test_all_tools_read_only():
-    tools = asyncio.run(S.mcp.list_tools())
-    assert {t.name for t in tools} >= {"sos_list", "sos_get", "sos_production_runs"}
-    assert all(t.annotations.read_only_hint for t in tools)
+def test_read_tools_marked_read_only():
+    tools = {t.name: t for t in asyncio.run(S.mcp.list_tools())}
+    writes = {"sos_update_record", "sos_create_record", "sos_delete_item"}
+    assert writes <= set(tools)
+    assert all(t.annotations.read_only_hint for n, t in tools.items() if n not in writes)
+    assert not any(tools[n].annotations.read_only_hint for n in writes)

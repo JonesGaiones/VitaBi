@@ -13,6 +13,7 @@ except ImportError:  # mcp 1.x
     from mcp.server.fastmcp import FastMCP as _Server
 from mcp.types import ToolAnnotations
 
+from . import writes as W
 from .client import SOSClient, SOSError
 
 # Filtros aceitos pela API em cada entidade (da documentação do developer.sosinventory.com).
@@ -49,8 +50,14 @@ FILTERS: dict[str, tuple[str, ...]] = {
 }
 Entity = Literal[tuple(FILTERS)]  # type: ignore[valid-type]
 RO = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+RW = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
+DEL = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True)
 
-INSTRUCTIONS = """Acesso SOMENTE LEITURA ao SOS Inventory da Vita Forte (estoque, produção, pedidos).
+INSTRUCTIONS = """Acesso ao SOS Inventory da Vita Forte (estoque, produção, pedidos). Leitura livre; escrita só com prévia e confirmação.
+ESCRITA: toda ferramenta sos_update_record/sos_create_record/sos_delete_item primeiro devolve uma PRÉVIA e um confirm_token.
+Mostre a prévia ao usuário e só chame de novo com o confirm_token se ele aprovar explicitamente. Um registro por vez.
+O SOS sincroniza invoices, POs e itens com o QuickBooks; mudanças nesses registros vão para o QuickBooks no próximo sync.
+Invoices: crie a partir da tela da Sales Order (não do Shipment), senão o preço vem do cadastro do item.
 Fluxo de pedidos: Estimate (nasce no QuickBooks) -> Sales Order -> Shipment -> Invoice.
 Produção = entidade `process` (números PRT...): entradas (matéria-prima, código com prefixo R) e saídas (pó, com lote).
 Códigos com prefixo W e sem W são o mesmo produto: nunca some os dois como produtos diferentes.
@@ -308,6 +315,67 @@ async def sos_lots(
         return r
     r["records"] = _compact(r["records"])
     return r
+
+
+# ------------------------------------------------------------------ escrita (com prévia)
+
+async def _w(fn, *a):
+    try:
+        return await anyio.to_thread.run_sync(lambda: fn(client(), *a))
+    except SOSError as e:
+        return {"erro": str(e)}
+
+
+@mcp.tool(annotations=RW)
+async def sos_update_record(
+    entity: Literal[W.UPDATABLE],  # type: ignore[valid-type]
+    id: int,
+    changes: dict[str, Any] | None = None,
+    line_changes: list[dict[str, Any]] | None = None,
+    reason: str | None = None,
+    confirm_token: str | None = None,
+) -> dict:
+    """Altera UM registro do SOS (item, invoice, salesorder, estimate, process, lot, customer...).
+
+    Duas etapas: 1) chame sem confirm_token e receba a PRÉVIA (campo a campo, antes/depois);
+    2) mostre ao usuário e, se ele aprovar, chame com os MESMOS argumentos e o confirm_token.
+    Antes de gravar, o registro inteiro é salvo em backup JSON e a mudança vai para o log.
+
+    - changes: campos de topo, ex. {"salesPrice": 35, "useMarkup": false}, {"comment": "..."},
+      {"class": {"id": 12}}. Referências (dict) são mescladas com o valor atual.
+    - line_changes: mudança em linhas, uma por item da lista:
+      {"list": "lines" | "inputs" | "outputs", "line_id": <id da linha>, "fields": {"unitprice": 0.49, "amount": 1258.32}}.
+      Ao mudar preço de linha, mande também o amount (qtd x preço) e confira os totais na prévia.
+    - reason: motivo, vai para o log.
+    """
+    return await _w(W.update, entity, id, changes, line_changes, confirm_token, reason)
+
+
+@mcp.tool(annotations=RW)
+async def sos_create_record(
+    entity: Literal[W.CREATABLE],  # type: ignore[valid-type]
+    data: dict[str, Any],
+    reason: str | None = None,
+    confirm_token: str | None = None,
+) -> dict:
+    """Cria UM registro (item, adjustment, transfer, customer, vendor), com prévia e confirmação.
+
+    Mesmo fluxo de duas etapas do sos_update_record. Dica: copie a estrutura de um registro
+    parecido (sos_get) e mude só o necessário. Em item com preço, useMarkup=false é colocado
+    automaticamente (senão o SOS ignora o salesPrice).
+    """
+    return await _w(W.create, entity, data, confirm_token, reason)
+
+
+@mcp.tool(annotations=DEL)
+async def sos_delete_item(item_id: int, reason: str | None = None, confirm_token: str | None = None) -> dict:
+    """Exclusão LÓGICA de um item (o SOS põe "(deleted)" no nome e mantém o histórico).
+
+    Só use quando o usuário pedir explicitamente. Prévia + confirm_token, com backup antes.
+    O SOS recusa se o item tiver saldo diferente de zero em alguma location.
+    Não existe exclusão de outros tipos de registro neste servidor.
+    """
+    return await _w(W.delete_item, item_id, confirm_token, reason)
 
 
 # ------------------------------------------------------------------ execução

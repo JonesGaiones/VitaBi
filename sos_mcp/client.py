@@ -1,7 +1,7 @@
-"""Cliente somente leitura da API do SOS Inventory (https://api.sosinventory.com/api/v2).
+"""Cliente da API do SOS Inventory (https://api.sosinventory.com/api/v2).
 
-Este módulo só faz GET nos dados. O único POST é para /oauth2/token (trocar o code
-ou renovar o token). Não existe código de escrita ou DELETE aqui, de propósito.
+Leitura: `get` e `list`. Escrita: só `send`, usado exclusivamente por `writes.py`, que
+exige prévia, confirmação, backup e log antes de qualquer POST/PUT/DELETE.
 
 De onde vem o token, em ordem:
   1. SOS_ACCESS_TOKEN (variável de ambiente). Vale ~90 dias.
@@ -170,6 +170,34 @@ class SOSClient:
                     raise SOSError(f"Falha de rede em GET /{path}: {e}") from None
                 time.sleep(3 * (attempt + 1))
         raise SOSError(f"SOS não respondeu em GET /{path} depois de várias tentativas.")
+
+    def send(self, method: str, path: str, body: dict | None = None) -> dict[str, Any]:
+        """POST/PUT/DELETE. Só repete em 429 (limite) e 401 (token), nunca em erro 5xx,
+        para não duplicar uma criação."""
+        if method not in ("POST", "PUT", "DELETE"):
+            raise ValueError(method)
+        self._ensure()
+        data = json.dumps(body).encode() if body is not None else None
+        renewed = False
+        for attempt in range(4):
+            req = urllib.request.Request(API + path.lstrip("/"), data=data, method=method, headers={
+                "Authorization": f"Bearer {self._access}", "Accept": "application/json",
+                "Content-Type": "application/json",
+            })
+            try:
+                with self._open(req, timeout=120) as f:
+                    raw = f.read()
+                    return json.loads(raw) if raw else {}
+            except urllib.error.HTTPError as e:
+                if e.code == 401 and not renewed and self._renew():
+                    renewed = True
+                    continue
+                if e.code == 429:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                body_txt = e.read().decode(errors="replace")[:500]
+                raise SOSError(f"SOS respondeu {e.code} em {method} /{path}: {body_txt}") from None
+        raise SOSError(f"SOS recusou {method} /{path} por limite de requisições; tente de novo.")
 
     def list(self, entity: str, params: dict[str, Any] | None = None, start: int = 0,
              max_results: int = 50, all_pages: bool = False, cap: int = 2000) -> dict[str, Any]:
