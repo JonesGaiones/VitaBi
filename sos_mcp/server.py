@@ -201,7 +201,7 @@ async def sos_search_items(
         return r
     keep = ("id", "name", "description", "sku", "type", "category", "class", "onhand", "available",
             "onSO", "onPO", "onWO", "committed", "baseUnit", "purchaseCost", "salesPrice", "averageCost",
-            "lotTracked", "serialTracked", "archived", "vendor")
+            "lotTracking", "serialTracking", "reorderPoint", "leadTime", "archived", "vendor")
     r["records"] = _compact([{k: x.get(k) for k in keep if k in x} for x in r["records"]])
     return r
 
